@@ -32,5 +32,3 @@ This is meant to be the essential SMN HUD. Ideas, adjustments, and issues are we
 - Prefer different size presets? Tell us your font size, stroke, and padding.
 - Want other wards tracked or element heuristics tweaked? Share your rotation.
 - If something looks wrong (buff IDs, distances, timers), enable debug, note what you see, and send feedback.
-
-Happy bursting! SMN supremacy. :)
