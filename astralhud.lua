@@ -109,9 +109,10 @@ local defaults = {
         xlarge = {font_size = 17, stroke = 3, padding = 7},
     },
     modules = {
-        bptimers = true,
-        pet      = true,
-        buffs    = true,
+        bptimers     = true,
+        pet          = true,
+        buffs        = true,
+        jobabilities = true,
     },
     panel_text = {
         pos   = {x = 60, y = 60},
@@ -126,23 +127,40 @@ local state = {
     settings = config.load(defaults),
     buffs = {},
     tracked_ids = {},
-    last_recasts = {rage = 0, ward = 0},
-    ready_flash = {rage = 0, ward = 0},
     last_update = 0,
     bp_max = {rage = 45, ward = 45},
     favor_start = nil,
     astral_flow_start = nil,
     astral_conduit_start = nil,
-    buff_longest_remaining = 0,
-    queue = {rage = '(set with //astralhud setrage <name>)', ward = '(set with //astralhud setward <name>)'},
     pet_hp_track = {hpp = nil, t = nil, dps_pct = 0},
     mp_track = {mp = nil, t = nil, per_sec = 0},
     pet_dead_at = nil,
+    job_ability_max = {},
 }
 
 local ui = {
     panel_text = nil,
 }
+
+local smn_job_ability_names = {
+    -- SMN job abilities with meaningful recasts to surface in the HUD.
+    ['Elemental Siphon'] = true,
+    ['Mana Cede'] = true,
+    ['Apogee'] = true,
+    ['Astral Flow'] = true,
+    ['Astral Conduit'] = true,
+}
+
+local smn_job_abilities = {}
+
+local function build_smn_job_abilities()
+    smn_job_abilities = {}
+    for id, ability in pairs(res.job_abilities) do
+        if ability and smn_job_ability_names[ability.en] and ability.recast_id then
+            smn_job_abilities[id] = ability
+        end
+    end
+end
 
 local function build_tracked_ids()
     local mapping = {}
@@ -153,6 +171,21 @@ local function build_tracked_ids()
         end
     end
     state.tracked_ids = mapping
+end
+
+local function table_to_id_set(list)
+    local ids = {}
+    if not list then return ids end
+    if #list > 0 then
+        for _, id in ipairs(list) do
+            ids[id] = true
+        end
+    else
+        for id, has in pairs(list) do
+            if has then ids[id] = true end
+        end
+    end
+    return ids
 end
 
 local function clamp(v, minv, maxv)
@@ -195,6 +228,17 @@ local function init_ui()
     if not state.settings.panel_text then
         state.settings.panel_text = defaults.panel_text
     end
+    if not state.settings.panel_text.bg then
+        state.settings.panel_text.bg = defaults.panel_text.bg
+    elseif not state.settings.panel_text.bg.alpha then
+        state.settings.panel_text.bg.alpha = defaults.panel_text.bg.alpha
+    end
+    if not state.settings.modules then
+        state.settings.modules = defaults.modules
+    end
+    if state.settings.modules.jobabilities == nil then
+        state.settings.modules.jobabilities = defaults.modules.jobabilities
+    end
     if not state.settings.size_profiles then
         state.settings.size_profiles = defaults.size_profiles
     end
@@ -219,15 +263,13 @@ local function print_help()
     windower.add_to_chat(207, '[AstralHUD] Commands:')
     windower.add_to_chat(207, '  //astralhud | //ahud              - show this help')
     windower.add_to_chat(207, '  //astralhud toggle                - toggle HUD visibility')
-    windower.add_to_chat(207, '  //astralhud enable <module>       - enable module (bptimers, pet, buffs)')
-    windower.add_to_chat(207, '  //astralhud disable <module>      - disable module (bptimers, pet, buffs)')
+    windower.add_to_chat(207, '  //astralhud enable <module>       - enable module (bptimers, pet, buffs, jobabilities)')
+    windower.add_to_chat(207, '  //astralhud disable <module>      - disable module (bptimers, pet, buffs, jobabilities)')
     windower.add_to_chat(207, '  //astralhud reset                 - reset positions/settings to default')
     windower.add_to_chat(207, '  //astralhud showall on|off        - show HUD even when not on SMN')
     windower.add_to_chat(207, '  //astralhud debug on|off          - toggle buff tracking debug messages')
-    windower.add_to_chat(207, '  //astralhud setrage <name>        - set planned next BP: Rage')
-    windower.add_to_chat(207, '  //astralhud setward <name>        - set planned next BP: Ward')
-    windower.add_to_chat(207, '  //astralhud clearqueue            - clear planned pacts')
     windower.add_to_chat(207, '  //astralhud size xsmall|small|normal|large|xlarge - change HUD size')
+    windower.add_to_chat(207, '  //astralhud bgopacity 0-255       - set HUD background opacity')
     windower.add_to_chat(207, '  //astralhud listbuffs             - list all tracked ward buff IDs')
 end
 
@@ -238,6 +280,24 @@ local function toggle_visibility()
     windower.add_to_chat(207, ('[AstralHUD] HUD %s.'):format(status))
 
     if ui.panel_text then ui.panel_text:visible(state.settings.visible) end
+end
+
+local function set_background_opacity(alpha)
+    local value = tonumber(alpha)
+    if not value then
+        return nil, 'Opacity must be a number between 0 and 255.'
+    end
+
+    value = clamp(math.floor(value + 0.5), 0, 255)
+    state.settings.panel_text.bg = state.settings.panel_text.bg or {}
+    state.settings.panel_text.bg.alpha = value
+    config.save(state.settings)
+
+    if ui.panel_text and ui.panel_text.bg_alpha then
+        pcall(function() ui.panel_text:bg_alpha(value) end)
+    end
+
+    return value
 end
 
 local function handle_command(cmd, ...)
@@ -254,7 +314,7 @@ local function handle_command(cmd, ...)
             config.save(state.settings)
             windower.add_to_chat(207, ('[AstralHUD] Module "%s" enabled.'):format(module))
         else
-            windower.add_to_chat(207, '[AstralHUD] Unknown module. Use: bptimers, pet, buffs')
+            windower.add_to_chat(207, '[AstralHUD] Unknown module. Use: bptimers, pet, buffs, jobabilities')
         end
         return
     elseif cmd == 'disable' then
@@ -264,7 +324,7 @@ local function handle_command(cmd, ...)
             config.save(state.settings)
             windower.add_to_chat(207, ('[AstralHUD] Module "%s" disabled.'):format(module))
         else
-            windower.add_to_chat(207, '[AstralHUD] Unknown module. Use: bptimers, pet, buffs')
+            windower.add_to_chat(207, '[AstralHUD] Unknown module. Use: bptimers, pet, buffs, jobabilities')
         end
         return
     elseif cmd == 'reset' then
@@ -302,29 +362,6 @@ local function handle_command(cmd, ...)
             windower.add_to_chat(207, '[AstralHUD] Usage: //astralhud debug on|off')
         end
         return
-    elseif cmd == 'setrage' then
-        local name = table.concat(args, ' ')
-        if name == '' then
-            windower.add_to_chat(207, '[AstralHUD] Usage: //astralhud setrage <next rage pact name>')
-        else
-            state.queue.rage = name
-            windower.add_to_chat(207, ('[AstralHUD] Next Rage set: %s'):format(name))
-        end
-        return
-    elseif cmd == 'setward' then
-        local name = table.concat(args, ' ')
-        if name == '' then
-            windower.add_to_chat(207, '[AstralHUD] Usage: //astralhud setward <next ward pact name>')
-        else
-            state.queue.ward = name
-            windower.add_to_chat(207, ('[AstralHUD] Next Ward set: %s'):format(name))
-        end
-        return
-    elseif cmd == 'clearqueue' then
-        state.queue.rage = '(set with //astralhud setrage <name>)'
-        state.queue.ward = '(set with //astralhud setward <name>)'
-        windower.add_to_chat(207, '[AstralHUD] Pact queue cleared.')
-        return
     elseif cmd == 'size' then
         local which = args[1] and args[1]:lower()
         if not which or not state.settings.size_profiles[which] then
@@ -356,6 +393,18 @@ local function handle_command(cmd, ...)
             windower.add_to_chat(207, '  No buffs tracked (resources not loaded yet?)')
         end
         return
+    elseif cmd == 'bgopacity' or cmd == 'bgalpha' then
+        local alpha = args[1]
+        local applied, err = set_background_opacity(alpha)
+        if applied then
+            windower.add_to_chat(207, ('[AstralHUD] Background opacity set to %d.'):format(applied))
+        else
+            windower.add_to_chat(207, '[AstralHUD] Usage: //astralhud bgopacity 0-255')
+            if err then
+                windower.add_to_chat(207, '[AstralHUD] ' .. err)
+            end
+        end
+        return
     end
 
     print_help()
@@ -379,17 +428,68 @@ local function update_bp_timers()
     local rage_pct = state.bp_max.rage > 0 and (1 - rage / state.bp_max.rage) or 1
     local ward_pct = state.bp_max.ward > 0 and (1 - ward / state.bp_max.ward) or 1
 
-    local rage_bar = make_bar(rage_pct, 20)
-    local ward_bar = make_bar(ward_pct, 20)
+    local bar_len = 12
+    local rage_bar = make_bar(rage_pct, bar_len)
+    local ward_bar = make_bar(ward_pct, bar_len)
 
     return {
         lines = {
-            string.format('Rage: %s  %s', rage_status, rage_bar),
-            string.format('Ward: %s  %s', ward_status, ward_bar),
+            string.format('Rage: %s %s  |  Ward: %s %s', rage_status, rage_bar, ward_status, ward_bar),
         },
         rage_cd = rage,
         ward_cd = ward,
     }
+end
+
+local function update_smn_job_abilities()
+    if not state.settings.modules.jobabilities then return {} end
+
+    if not next(smn_job_abilities) then
+        build_smn_job_abilities()
+    end
+
+    local abilities = windower.ffxi.get_abilities()
+    if not abilities or not abilities.job_abilities then
+        return {'Job ability data unavailable'}
+    end
+
+    local unlocked = table_to_id_set(abilities.job_abilities)
+    local recasts = windower.ffxi.get_ability_recasts() or {}
+    local entries = {}
+
+    for id, ability in pairs(smn_job_abilities) do
+        if unlocked[id] then
+            local recast_id = ability.recast_id
+            if recast_id then
+                local cd = recasts[recast_id] or 0
+                state.job_ability_max[recast_id] = math.max(state.job_ability_max[recast_id] or cd, cd)
+                table.insert(entries, {
+                    name = ability.en,
+                    recast = cd,
+                    recast_id = recast_id,
+                    max = state.job_ability_max[recast_id] or cd,
+                })
+            end
+        end
+    end
+
+    if #entries == 0 then
+        return {'No Summoner job abilities unlocked'}
+    end
+
+    table.sort(entries, function(a, b) return a.name < b.name end)
+    local lines = {}
+    for _, entry in ipairs(entries) do
+        local status = entry.recast > 0 and fmt_time(entry.recast) or 'READY'
+        local bar = ''
+        if entry.max and entry.max > 0 then
+            local pct = 1 - (entry.recast / entry.max)
+            bar = ' ' .. make_bar(pct, 12)
+        end
+        table.insert(lines, string.format('%s: %s%s', entry.name, status, bar))
+    end
+
+    return lines
 end
 
 local function update_pet_info()
@@ -449,8 +549,9 @@ local function update_pet_info()
         end
     end
 
-    local hp_bar = make_bar(hpp / 100, 20)
-    local mp_bar = make_bar(mpp / 100, 20)
+    local bar_len = 12
+    local hp_bar = make_bar(hpp / 100, bar_len)
+    local mp_bar = make_bar(mpp / 100, bar_len)
 
     -- Convert pet status to readable text
     local status_text = 'Unknown'
@@ -511,11 +612,11 @@ local function update_pet_info()
 
     local low_hp_alert = hpp <= 30 and 'LOW HP' or ''
 
+    local vitals_line = string.format('HP %3d%% %s  MP %3d%% (%d) %s  TP: %d', hpp, hp_bar, mpp, mp, mp_bar, tp)
+
     return {
         string.format('%s (%s)', pet.name, status_text),
-        string.format('HP %3d%% %s', hpp, hp_bar),
-        string.format('MP %3d%% (%d) %s', mpp, mp, mp_bar),
-        string.format('TP: %d', tp),
+        vitals_line,
         string.format('Element: %s  Day: %s  Weather: %s', element, day_element, weather_element),
         string.format('Summoning: %d  Favor: %s  Perp: %d MP/tick', summoning_skill, favor_status, perp),
         string.format('Favor range: %d party in 10y  |  %s', in_range, align_text),
@@ -534,12 +635,10 @@ local function update_buff_display()
     end
 
     if next(state.buffs) == nil then
-        state.buff_longest_remaining = 0
         return {'No ward buffs tracked yet'}
     end
 
     local lines = {}
-    state.buff_longest_remaining = 0
     local ordered = {}
     for buff, info in pairs(state.buffs) do
         table.insert(ordered, {name = buff, info = info})
@@ -553,9 +652,6 @@ local function update_buff_display()
         if remaining > 0 then
             local target_str = table.concat(entry.info.targets, ', ')
             table.insert(lines, string.format('%s [%s] -> %s', entry.name, fmt_time(remaining), target_str))
-            if remaining > state.buff_longest_remaining then
-                state.buff_longest_remaining = remaining
-            end
         end
     end
 
@@ -589,25 +685,6 @@ local function pact_guidance()
     end
 
     return guidance
-end
-
-local function queue_overlay(recasts)
-    local lines = {}
-    local rage_cd = recasts.rage_cd or 0
-    local ward_cd = recasts.ward_cd or 0
-
-    local function label(cd)
-        return cd > 0 and fmt_time(cd) or 'READY'
-    end
-
-    table.insert(lines, string.format('Next Rage: %s (%s)', state.queue.rage, label(rage_cd)))
-    table.insert(lines, string.format('Next Ward: %s (%s)', state.queue.ward, label(ward_cd)))
-
-    if ward_cd == 0 and state.buff_longest_remaining > 30 then
-        table.insert(lines, string.format('Warning: Ward overwrite early (%s left)', fmt_time(state.buff_longest_remaining)))
-    end
-
-    return lines
 end
 
 local function update_astral_banners()
@@ -726,7 +803,7 @@ local function update_hud()
     local bp = update_bp_timers()
     append_section(lines, '[Astral Burst]', update_astral_banners())
     append_section(lines, '[Blood Pacts]', bp.lines)
-    append_section(lines, '[Pact Queue]', queue_overlay(bp))
+    append_section(lines, '[SMN Job Abilities]', update_smn_job_abilities())
     append_section(lines, '[Avatar]', update_pet_info())
     append_section(lines, '[Guidance]', pact_guidance())
     append_section(lines, '[Ward Buffs]', update_buff_display())
@@ -746,6 +823,7 @@ end
 
 windower.register_event('load', function()
     build_tracked_ids()
+    build_smn_job_abilities()
     init_ui()
 
     if state.settings.visible then
@@ -760,6 +838,7 @@ end)
 
 windower.register_event('login', function()
     destroy_ui()
+    build_smn_job_abilities()
     init_ui()
 end)
 

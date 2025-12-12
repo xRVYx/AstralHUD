@@ -110,6 +110,7 @@
         <modules>
             <bptimers>true</bptimers>
             <buffs>true</buffs>
+            <jobabilities>true</jobabilities>
             <pet>true</pet>
         </modules>
         <panel_text>
@@ -224,6 +225,16 @@
                 <padding>2</padding>
                 <stroke>2</stroke>
             </small>
+            <xlarge>
+                <font_size>17</font_size>
+                <padding>7</padding>
+                <stroke>3</stroke>
+            </xlarge>
+            <xsmall>
+                <font_size>8</font_size>
+                <padding>1</padding>
+                <stroke>1</stroke>
+            </xsmall>
         </size_profiles>
         <visible>true</visible>
     </global>
@@ -249,13 +260,14 @@
         <debug>true</debug>
         <panel_text>
             <pos>
-                <x>716</x>
-                <y>225</y>
+                <x>955</x>
+                <y>274</y>
             </pos>
             <text>
                 <fonts>
 
                 </fonts>
+                <size>9</size>
             </text>
         </panel_text>
         <pet_text>
