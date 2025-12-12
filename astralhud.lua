@@ -2,7 +2,7 @@
 -- Provides Blood Pact timers, avatar status, and simple buff tracking.
 
 _addon.name     = 'astralhud'
-_addon.author   = 'YourNameHere'
+_addon.author   = 'xRVYx'
 _addon.version  = '0.3.0'
 _addon.commands = {'astralhud', 'ahud'}
 
