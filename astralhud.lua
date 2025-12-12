@@ -3,7 +3,7 @@
 
 _addon.name     = 'astralhud'
 _addon.author   = 'xRVYx'
-_addon.version  = '0.3.0'
+_addon.version  = '0.3.5'
 _addon.commands = {'astralhud', 'ahud'}
 
 local config = require('config')
